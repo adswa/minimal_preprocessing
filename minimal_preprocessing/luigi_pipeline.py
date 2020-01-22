@@ -21,7 +21,9 @@ class Resample(ExternalProgramTask):
     def output(self):
         outpath = add_name(self.filepath, "resample")
         self.outpath = outpath
-        return luigi.LocalTarget(outpath)
+        return {
+            "output_image": luigi.LocalTarget(outpath)
+        }
 
     def requires(self):
         return Refit(self.filepath)
@@ -36,11 +38,11 @@ class MeanImage(ExternalProgramTask):
         return Resample(self.filepath)
 
     def output(self):
-        self.outpath_string = add_name(str(self.input().path), "mean")
+        self.outpath_string = add_name(str(self.input()["output_image"].path), "mean")
         return luigi.LocalTarget(self.outpath_string)
 
     def program_args(self):
-        inpath = str(self.input().path)
+        inpath = str(self.input()["output_image"].path)
         return ["3dTstat", "-mean", "-prefix", self.outpath_string, inpath]
 
 class MotionCorrect(ExternalProgramTask):
@@ -51,9 +53,12 @@ class MotionCorrect(ExternalProgramTask):
 
     def output(self):
         image, mean = self.input()
+        image = image["output_image"]
         name = str(image.path).split(".")[0]
 
         output = {
+            "input_image": image,
+            "input_mean": mean,
             "aff12": luigi.LocalTarget(name + "_aff12.1D"),
             "output1D": luigi.LocalTarget(name + "_resample.1D"),
             "maxdisp1D": luigi.LocalTarget(name + "_max_displacement.1D"),
@@ -62,7 +67,6 @@ class MotionCorrect(ExternalProgramTask):
         return output
 
     def program_args(self):
-        image, mean = self.input()
         out_dict = self.output()
         return shlex.split(
             "3dvolreg -Fourier -twopass -1Dfile {output1D} "
@@ -73,18 +77,20 @@ class MotionCorrect(ExternalProgramTask):
             "-maxdisp1D {output_max_displacement} {filepath}".format(output1D=str(out_dict["output1D"].path),
                                                                      output_affine=str(out_dict["aff12"].path),
                                                                      outpath=str(out_dict["output_image"].path),
-                                                                     meanpath=str(mean.path),
+                                                                     meanpath=str(out_dict["input_mean"].path),
                                                                      output_max_displacement=str(out_dict["maxdisp1D"].path),
-                                                                     filepath=str(image.path)
+                                                                     filepath=str(out_dict["input_image"].path)
                                                                      )
         )
 
 class MeanMotionCorrect(MeanImage):
     def requires(self):
         return MotionCorrect(self.filepath)
-    def output(self):
-        self.outpath_string = add_name(str(self.input()["output_image"].path), "mean")
-        return luigi.LocalTarget(self.outpath_string)
+
+
+class MotionCorrectA(MotionCorrect):
+    def requires(self):
+        return MotionCorrect(self.filepath), MeanMotionCorrect(self.filepath)
 
 
 class SkullStrip(ExternalProgramTask):
