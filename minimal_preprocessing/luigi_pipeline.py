@@ -80,6 +80,11 @@ class MotionCorrect(ExternalProgramTask):
         )
 
 class MeanMotionCorrect(MeanImage):
+    def requires(self):
+        return MotionCorrect(self.filepath)
+    def output(self):
+        self.outpath_string = add_name(str(self.input()["output_image"].path), "mean")
+        return luigi.LocalTarget(self.outpath_string)
 
 
 class SkullStrip(ExternalProgramTask):
