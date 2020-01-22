@@ -42,7 +42,6 @@ REGISTRATION = (
 )
 
 
-
 def anat_pipeline(anatomical_path, output_path):
     if not Path(anatomical_path).exists():
         print("The anat file does not exist at: " + anatomical_path)
