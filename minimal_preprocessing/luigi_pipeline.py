@@ -1,6 +1,7 @@
 import luigi
 from pathlib import Path
 import shlex
+import os
 from luigi.contrib.external_program import ExternalProgramTask
 
 
@@ -68,7 +69,7 @@ class AnatRegister(ExternalProgramTask):
         return SkullStrip(self.anatpath), FunctionalMask(self.funcpath)
 
     def output(self):
-        self.output_string = add_name(str(self.input()[1].path), "flirt")
+        self.output_string = str(self.input()[1].path).split(".")[0] + ".mat"
         return luigi.LocalTarget(self.output_string)
 
     def program_args(self):
@@ -76,6 +77,47 @@ class AnatRegister(ExternalProgramTask):
         return ["flirt", "-in", str(func_file.path), "-ref", str(anat_file.path), "-omat", self.output_string,
                 "-cost", "corratio", "-dof", "6", "-interp", "trilinear"]
 
+class Segment(ExternalProgramTask):
+    filepath = luigi.Parameter()
+    def requires(self):
+        return SkullStrip(self.filepath)
+    def output(self):
+        output_folder = os.sep.join(self.input().path.split(os.sep)[0:-1])
+        self.output_pattern = os.path.join(output_folder, "segment")
+        self.whitematter_path = os.path.join(output_folder, "segment_prob_2.nii.gz")
+        return luigi.LocalTarget(self.whitematter_path)
+
+    def program_args(self):
+        return ["fast", "-t", "1", "-o", self.output_pattern, "-p", "-g", "-S", "1", str(self.input().path)]
+
+class WhiteMatterBinarize(ExternalProgramTask):
+    filepath = luigi.Parameter()
+    def requires(self):
+        return Segment(self.filepath)
+
+    def output(self):
+        self.output_string = add_name(str(self.input().path), "maths")
+        return luigi.LocalTarget(self.output_string)
+
+    def program_args(self):
+        return ["fslmaths", self.filepath, "-thr", "0.5", "-bin", self.output_string]
+
+    pass
+
+class WMAnatRegister(ExternalProgramTask):
+    anatpath = luigi.Parameter()
+    funcpath = luigi.Parameter()
+    def requires(self):
+        return SkullStrip(self.anatpath), WhiteMatterBinarize(self.anatpath), FunctionalMask(self.funcpath), AnatRegister(self.anatpath, self.funcpath)
+
+    def output(self):
+        self.output_string = str(self.input()[1].path).split(".")[0] + ".mat"
+        return luigi.LocalTarget(self.output_string)
+
+    def program_args(self):
+        anat_file, func_file = self.input()
+        return ["flirt", "-in", str(func_file.path), "-ref", str(anat_file.path), "-omat", self.output_string,
+                "-cost", "corratio", "-dof", "6", "-interp", "trilinear"]
 
 
 

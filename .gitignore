@@ -5,3 +5,4 @@ venv
 *.1D
 __pycache__
 *.log
+*.mat
