@@ -111,15 +111,31 @@ class WMAnatRegister(ExternalProgramTask):
         return SkullStrip(self.anatpath), WhiteMatterBinarize(self.anatpath), FunctionalMask(self.funcpath), AnatRegister(self.anatpath, self.funcpath)
 
     def output(self):
-        self.output_string = str(self.input()[1].path).split(".")[0] + ".mat"
+        self.output_string = str(self.input()[1].path).split(".")[0] + "_wmreg.mat"
         return luigi.LocalTarget(self.output_string)
 
     def program_args(self):
-        anat_file, func_file = self.input()
+        anat_file, wm_binary, func_file, register_matrix = self.input()
         return ["flirt", "-in", str(func_file.path), "-ref", str(anat_file.path), "-omat", self.output_string,
-                "-cost", "corratio", "-dof", "6", "-interp", "trilinear"]
+                "-cost", "bbr", "-wmseg", str(wm_binary.path), "-dof", "6", "-init", str(register_matrix.path),
+                "-schedule", "/usr/share/fsl/5.0/etc/flirtsch/bbr.sch"]
 
 
+class ConvertFSLAffine(ExternalProgramTask):
+    anatpath = luigi.Parameter()
+    funcpath = luigi.Parameter()
+    def requires(self):
+        return SkullStrip(self.anatpath), MeanMasked(self.funcpath), WMAnatRegister(self.anatpath, self.funcpath)
+
+    def output(self):
+        self.output_folder = os.path.sep.join(str(self.input()[1].path).split(os.path.sep)[0:-1])
+        return luigi.LocalTarget(os.path.join(self.output_folder, "affine.txt"))
+
+    def program_args(self):
+        anat_image, func_image, register_mat = self.input()
+        return ["c3d_affine_tool", "-ref", str(anat_image.path), "-src", str(func_image.path), str(register_mat.path),
+                "-fsl2ras", "-oitk", os.path.join(self.output_folder, "affine.txt")
+                ]
 
 class MeanImage(ExternalProgramTask):
     filepath = luigi.Parameter()
@@ -136,6 +152,9 @@ class MeanImage(ExternalProgramTask):
         inpath = str(self.input()["output_image"].path)
         return ["3dTstat", "-mean", "-prefix", self.outpath_string, inpath]
 
+class MeanMasked(MeanImage):
+    def requires(self):
+        return {"output_image": FunctionalMask(self.filepath)}
 
 class MotionCorrect(ExternalProgramTask):
     filepath = luigi.Parameter()
