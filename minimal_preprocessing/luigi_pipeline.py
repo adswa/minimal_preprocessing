@@ -21,19 +21,68 @@ class Resample(ExternalProgramTask):
     def output(self):
         outpath = add_name(self.filepath, "resample")
         self.outpath = outpath
-        return {
-            "output_image": luigi.LocalTarget(outpath)
-        }
+        return {"output_image": luigi.LocalTarget(outpath)}
 
     def requires(self):
         return Refit(self.filepath)
 
     def program_args(self):
-        return ["3dresample", "-orient", "RPI", "-prefix", self.outpath, "-inset", self.filepath]
+        return [
+            "3dresample",
+            "-orient",
+            "RPI",
+            "-prefix",
+            self.outpath,
+            "-inset",
+            self.filepath,
+        ]
+
+
+class FunctionalMask(ExternalProgramTask):
+    filepath = luigi.Parameter()
+    output_string = None
+    mask_string = None
+
+    def requires(self):
+        return MotionCorrectA(self.filepath)
+
+    def output(self):
+        self.output_string = add_name(self.input()["output_image"].path, "automask")
+        self.mask_string = add_name(self.input()["output_image"].path, "mask")
+        return luigi.LocalTarget(self.output_string)
+
+    def program_args(self):
+        return [
+            "3dAutomask",
+            "-apply_prefix",
+            self.output_string,
+            "-prefix",
+            self.mask_string,
+            str(self.input()["output_image"].path),
+        ]
+
+class AnatRegister(ExternalProgramTask):
+    anatpath = luigi.Parameter()
+    funcpath = luigi.Parameter()
+    def requires(self):
+        return SkullStrip(self.anatpath), FunctionalMask(self.funcpath)
+
+    def output(self):
+        self.output_string = add_name(str(self.input()[1].path), "flirt")
+        return luigi.LocalTarget(self.output_string)
+
+    def program_args(self):
+        anat_file, func_file = self.input()
+        return ["flirt", "-in", str(func_file.path), "-ref", str(anat_file.path), "-omat", self.output_string,
+                "-cost", "corratio", "-dof", "6", "-interp", "trilinear"]
+
+
+
 
 class MeanImage(ExternalProgramTask):
     filepath = luigi.Parameter()
     outpath_string = None
+
     def requires(self):
         return Resample(self.filepath)
 
@@ -44,6 +93,7 @@ class MeanImage(ExternalProgramTask):
     def program_args(self):
         inpath = str(self.input()["output_image"].path)
         return ["3dTstat", "-mean", "-prefix", self.outpath_string, inpath]
+
 
 class MotionCorrect(ExternalProgramTask):
     filepath = luigi.Parameter()
@@ -62,7 +112,7 @@ class MotionCorrect(ExternalProgramTask):
             "aff12": luigi.LocalTarget(name + "_aff12.1D"),
             "output1D": luigi.LocalTarget(name + "_resample.1D"),
             "maxdisp1D": luigi.LocalTarget(name + "_max_displacement.1D"),
-            "output_image": luigi.LocalTarget(name + "_volreg.nii.gz")
+            "output_image": luigi.LocalTarget(name + "_volreg.nii.gz"),
         }
         return output
 
@@ -74,14 +124,16 @@ class MotionCorrect(ExternalProgramTask):
             "-prefix {outpath} "
             "-base {meanpath} "
             "-zpad 4 "
-            "-maxdisp1D {output_max_displacement} {filepath}".format(output1D=str(out_dict["output1D"].path),
-                                                                     output_affine=str(out_dict["aff12"].path),
-                                                                     outpath=str(out_dict["output_image"].path),
-                                                                     meanpath=str(out_dict["input_mean"].path),
-                                                                     output_max_displacement=str(out_dict["maxdisp1D"].path),
-                                                                     filepath=str(out_dict["input_image"].path)
-                                                                     )
+            "-maxdisp1D {output_max_displacement} {filepath}".format(
+                output1D=str(out_dict["output1D"].path),
+                output_affine=str(out_dict["aff12"].path),
+                outpath=str(out_dict["output_image"].path),
+                meanpath=str(out_dict["input_mean"].path),
+                output_max_displacement=str(out_dict["maxdisp1D"].path),
+                filepath=str(out_dict["input_image"].path),
+            )
         )
+
 
 class MeanMotionCorrect(MeanImage):
     def requires(self):
@@ -100,7 +152,7 @@ class SkullStrip(ExternalProgramTask):
         return Resample(self.filepath)
 
     def output(self):
-        return luigi.LocalTarget(add_name(str(self.input().path), "skullstrip"))
+        return luigi.LocalTarget(add_name(str(self.input()["output_image"].path), "skullstrip"))
 
     def program_args(self):
         outpath = str(self.output().path)
@@ -120,10 +172,10 @@ class AntsRegister(ExternalProgramTask):
         input_folder = Path(input_path).parents[0]
         self.input_folder = input_folder
         output = {
-            "transform0": input_folder/"transform0DerivedInitialMovingTranslation.mat",
-            "transform1": input_folder/"transform1Rigid.mat",
-            "transform2": input_folder/"transform2Affine.mat",
-            "transform3": input_folder/"transform3Warp.nii.gz"
+            "transform0": input_folder / "transform0DerivedInitialMovingTranslation.mat",
+            "transform1": input_folder / "transform1Rigid.mat",
+            "transform2": input_folder / "transform2Affine.mat",
+            "transform3": input_folder / "transform3Warp.nii.gz",
         }
 
         return output
@@ -159,14 +211,22 @@ class AntsRegister(ExternalProgramTask):
             "--smoothing-sigmas 3.0x2.0x1.0x0.0 "
             "--shrink-factors 6x4x2x1 "
             "--use-histogram-matching 1 "
-            "--winsorize-image-intensities [0.01,0.99] -v".format(filepath=inpath, outpath=self.input_folder))
+            "--winsorize-image-intensities [0.01,0.99] -v".format(
+                filepath=inpath, outpath=self.input_folder
+            )
+        )
 
 
-
-def add_name(filepath, task_name = "task"):
+def add_name(filepath, task_name="task"):
     filepath_string = str(filepath)
-    outpath = ".".join([filepath_string.split(".")[0] + "_" + task_name, filepath_string.split(".", 1)[1]])
-    return outpath
+    out_path = ".".join(
+        [
+            filepath_string.split(".")[0] + "_" + task_name,
+            filepath_string.split(".", 1)[1],
+        ]
+    )
+    return out_path
+
 
 if __name__ == "__main__":
     luigi.run()
