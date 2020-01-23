@@ -62,9 +62,12 @@ class FunctionalMask(ExternalProgramTask):
             str(self.input()["output_image"].path),
         ]
 
+
 class AnatRegister(ExternalProgramTask):
     anatpath = luigi.Parameter()
     funcpath = luigi.Parameter()
+    output_string = None
+
     def requires(self):
         return SkullStrip(self.anatpath), FunctionalMask(self.funcpath)
 
@@ -74,13 +77,31 @@ class AnatRegister(ExternalProgramTask):
 
     def program_args(self):
         anat_file, func_file = self.input()
-        return ["flirt", "-in", str(func_file.path), "-ref", str(anat_file.path), "-omat", self.output_string,
-                "-cost", "corratio", "-dof", "6", "-interp", "trilinear"]
+        return [
+            "flirt",
+            "-in",
+            str(func_file.path),
+            "-ref",
+            str(anat_file.path),
+            "-omat",
+            self.output_string,
+            "-cost",
+            "corratio",
+            "-dof",
+            "6",
+            "-interp",
+            "trilinear",
+        ]
+
 
 class Segment(ExternalProgramTask):
     filepath = luigi.Parameter()
+    output_pattern = None
+    whitematter_path = None
+
     def requires(self):
         return SkullStrip(self.filepath)
+
     def output(self):
         output_folder = os.sep.join(self.input().path.split(os.sep)[0:-1])
         self.output_pattern = os.path.join(output_folder, "segment")
@@ -88,10 +109,24 @@ class Segment(ExternalProgramTask):
         return luigi.LocalTarget(self.whitematter_path)
 
     def program_args(self):
-        return ["fast", "-t", "1", "-o", self.output_pattern, "-p", "-g", "-S", "1", str(self.input().path)]
+        return [
+            "fast",
+            "-t",
+            "1",
+            "-o",
+            self.output_pattern,
+            "-p",
+            "-g",
+            "-S",
+            "1",
+            str(self.input().path),
+        ]
+
 
 class WhiteMatterBinarize(ExternalProgramTask):
     filepath = luigi.Parameter()
+    output_string = None
+
     def requires(self):
         return Segment(self.filepath)
 
@@ -104,11 +139,19 @@ class WhiteMatterBinarize(ExternalProgramTask):
 
     pass
 
+
 class WMAnatRegister(ExternalProgramTask):
     anatpath = luigi.Parameter()
     funcpath = luigi.Parameter()
+    output_string = None
+
     def requires(self):
-        return SkullStrip(self.anatpath), WhiteMatterBinarize(self.anatpath), FunctionalMask(self.funcpath), AnatRegister(self.anatpath, self.funcpath)
+        return (
+            SkullStrip(self.anatpath),
+            WhiteMatterBinarize(self.anatpath),
+            FunctionalMask(self.funcpath),
+            AnatRegister(self.anatpath, self.funcpath),
+        )
 
     def output(self):
         self.output_string = str(self.input()[1].path).split(".")[0] + "_wmreg.mat"
@@ -116,26 +159,133 @@ class WMAnatRegister(ExternalProgramTask):
 
     def program_args(self):
         anat_file, wm_binary, func_file, register_matrix = self.input()
-        return ["flirt", "-in", str(func_file.path), "-ref", str(anat_file.path), "-omat", self.output_string,
-                "-cost", "bbr", "-wmseg", str(wm_binary.path), "-dof", "6", "-init", str(register_matrix.path),
-                "-schedule", "/usr/share/fsl/5.0/etc/flirtsch/bbr.sch"]
+        return [
+            "flirt",
+            "-in",
+            str(func_file.path),
+            "-ref",
+            str(anat_file.path),
+            "-omat",
+            self.output_string,
+            "-cost",
+            "bbr",
+            "-wmseg",
+            str(wm_binary.path),
+            "-dof",
+            "6",
+            "-init",
+            str(register_matrix.path),
+            "-schedule",
+            "/usr/share/fsl/5.0/etc/flirtsch/bbr.sch",
+        ]
 
 
 class ConvertFSLAffine(ExternalProgramTask):
     anatpath = luigi.Parameter()
     funcpath = luigi.Parameter()
+    output_folder = None
+
     def requires(self):
-        return SkullStrip(self.anatpath), MeanMasked(self.funcpath), WMAnatRegister(self.anatpath, self.funcpath)
+        return (
+            SkullStrip(self.anatpath),
+            MeanMasked(self.funcpath),
+            WMAnatRegister(self.anatpath, self.funcpath),
+        )
 
     def output(self):
-        self.output_folder = os.path.sep.join(str(self.input()[1].path).split(os.path.sep)[0:-1])
+        self.output_folder = os.path.sep.join(
+            str(self.input()[1].path).split(os.path.sep)[0:-1]
+        )
         return luigi.LocalTarget(os.path.join(self.output_folder, "affine.txt"))
 
     def program_args(self):
         anat_image, func_image, register_mat = self.input()
-        return ["c3d_affine_tool", "-ref", str(anat_image.path), "-src", str(func_image.path), str(register_mat.path),
-                "-fsl2ras", "-oitk", os.path.join(self.output_folder, "affine.txt")
-                ]
+        return [
+            "c3d_affine_tool",
+            "-ref",
+            str(anat_image.path),
+            "-src",
+            str(func_image.path),
+            str(register_mat.path),
+            "-fsl2ras",
+            "-oitk",
+            os.path.join(self.output_folder, "affine.txt"),
+            "&&",
+            "sed",
+            "s/MatrixOffsetTransformBase_double_3_3/AffineTransform_double_3_3/",
+            "-i",
+            os.path.join(self.output_folder, "affine.txt"),
+        ]
+
+
+class ApplyAntsWarp(ExternalProgramTask):
+    anatpath = luigi.Parameter()
+    funcpath = luigi.Parameter()
+    output_string = None
+
+    def requires(self):
+        return (
+            AntsRegister(self.anatpath),
+            FunctionalMask(self.funcpath),
+            ConvertFSLAffine(self.anatpath, self.funcpath),
+        )
+
+    def output(self):
+        self.output_string = add_name(str(self.input()[1].path), "antswarp")
+        return luigi.LocalTarget(self.output_string)
+
+    def program_args(self):
+        ants_output, functional, affine = self.input()
+        return shlex.split(
+                (
+                    "antsApplyTransforms "
+                    "--default-value 0 "
+                    "--dimensionality 3 "
+                    "--float 0 "
+                    "--input {filepath} "
+                    "--input-image-type 3 "
+                    "--interpolation Linear "
+                    "--output {outpath} "
+                    "--reference-image /usr/share/fsl/5.0/data/standard/MNI152_T1_2mm_brain.nii.gz "
+                    "--transform {transform3} "
+                    "--transform {transform2} "
+                    "--transform {transform1} "
+                    "--transform {transform0} "
+                    "--transform {affine}"
+                ).format(
+                    filepath=str(functional.path),
+                    outpath=self.output_string,
+                    transform3=str(ants_output["transform3"]),
+                    transform2=str(ants_output["transform2"]),
+                    transform1=str(ants_output["transform1"]),
+                    transform0=str(ants_output["transform0"]),
+                    affine=str(affine.path),
+                )
+            )
+
+
+
+class ConvertToAnts(ExternalProgramTask):
+    anatpath = luigi.Parameter()
+    funcpath = luigi.Parameter()
+    output_file = None
+
+    def requires(self):
+        return ConvertFSLAffine(self.anatpath, self.funcpath)
+
+    def output(self):
+        self.output_file = str(self.input().path).replace("affine", "affine_conv")
+        return luigi.LocalTarget(self.output_file)
+
+    def program_args(self):
+        input_file = self.input()
+        return [
+            "sed",
+            "s/MatrixOffsetTransformBase_double_3_3/AffineTransform_double_3_3/;w "
+            + self.output_file,
+            str(input_file.path),
+        ]
+
 
 class MeanImage(ExternalProgramTask):
     filepath = luigi.Parameter()
@@ -152,9 +302,11 @@ class MeanImage(ExternalProgramTask):
         inpath = str(self.input()["output_image"].path)
         return ["3dTstat", "-mean", "-prefix", self.outpath_string, inpath]
 
+
 class MeanMasked(MeanImage):
     def requires(self):
         return {"output_image": FunctionalMask(self.filepath)}
+
 
 class MotionCorrect(ExternalProgramTask):
     filepath = luigi.Parameter()
@@ -213,7 +365,9 @@ class SkullStrip(ExternalProgramTask):
         return Resample(self.filepath)
 
     def output(self):
-        return luigi.LocalTarget(add_name(str(self.input()["output_image"].path), "skullstrip"))
+        return luigi.LocalTarget(
+            add_name(str(self.input()["output_image"].path), "skullstrip")
+        )
 
     def program_args(self):
         outpath = str(self.output().path)
@@ -233,7 +387,8 @@ class AntsRegister(ExternalProgramTask):
         input_folder = Path(input_path).parents[0]
         self.input_folder = input_folder
         output = {
-            "transform0": input_folder / "transform0DerivedInitialMovingTranslation.mat",
+            "transform0": input_folder
+            / "transform0DerivedInitialMovingTranslation.mat",
             "transform1": input_folder / "transform1Rigid.mat",
             "transform2": input_folder / "transform2Affine.mat",
             "transform3": input_folder / "transform3Warp.nii.gz",

@@ -6,4 +6,4 @@ venv
 __pycache__
 *.log
 *.mat
-*affine.txt
+affine*.txt
