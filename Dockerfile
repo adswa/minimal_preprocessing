@@ -147,7 +147,7 @@ RUN pip install xvfbwrapper
 
 COPY PEER_eye_2mm_r30.nii.gz /cpac_resources/PEER_eye_2mm_r30.nii.gz
 
-RUN pip3 install git+https://github.com/cbin-cnl/minimal_preprocessing.git
+RUN pip3 install git+https://github.com/cbin-cnl/minimal_preprocessing.git@run-multi-anat
 
 ENTRYPOINT ["/usr/local/bin/preprocess_peer"]
 
