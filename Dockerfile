@@ -1,4 +1,5 @@
 #using neurodebian runtime as parent image
+#FROM neurodebian:xenial-non-free
 FROM neurodebian:xenial-non-free
 MAINTAINER Unmaintained
 
@@ -6,6 +7,7 @@ RUN apt-get update
 
 # Install Ubuntu dependencies and utilities
 RUN apt-get install -y \
+      afni \
       build-essential \
       cmake \
       git \
@@ -76,17 +78,18 @@ ENV C3DPATH /opt/c3d/
 ENV PATH $C3DPATH/bin:$PATH
 
 # install AFNI
-RUN libs_path=/usr/lib/x86_64-linux-gnu && \
-    if [ -f $libs_path/libgsl.so.19 ]; then \
-        ln $libs_path/libgsl.so.19 $libs_path/libgsl.so.0; \
-    fi && \
-    mkdir -p /opt/afni && \
-    curl -sO http://s3.amazonaws.com/fcp-indi/resources/linux_openmp_64.zip && \
-    unzip -nj linux_openmp_64.zip -d /opt/afni && \
-    rm -rf linux_openmp_64.zip
+#RUN libs_path=/usr/lib/x86_64-linux-gnu && \
+#    if [ -f $libs_path/libgsl.so.19 ]; then \
+#        ln $libs_path/libgsl.so.19 $libs_path/libgsl.so.0; \
+#    fi && \
+#    mkdir -p /opt/afni && \
+#    curl -sO http://s3.amazonaws.com/fcp-indi/resources/linux_openmp_64.zip && \
+#    unzip -nj linux_openmp_64.zip -d /opt/afni && \
+#    rm -rf linux_openmp_64.zip
 
 # set up AFNI
-ENV PATH=/opt/afni:$PATH
+# basically copy all from afni.sh file
+ENV PATH=${PATH}:/usr/lib/afni/bin:/usr/lib/afni/plugins:/usr/lib/afni/models:/usr/share/afni/atlases
 
 # install FSL
 RUN apt-get install -y --no-install-recommends \
@@ -148,7 +151,6 @@ RUN pip install xvfbwrapper
 COPY PEER_eye_2mm_r30.nii.gz /cpac_resources/PEER_eye_2mm_r30.nii.gz
 
 RUN pip3 install git+https://github.com/cbin-cnl/minimal_preprocessing.git@run-multi-anat
-
 ENTRYPOINT ["/usr/local/bin/preprocess_peer"]
 
 RUN apt-get clean && \
